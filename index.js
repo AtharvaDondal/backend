@@ -11,7 +11,8 @@ dotenv.config();
 const app = express();
 
 const corsOptions = {
-  origin: "http://localhost:5173",
+  origin: ["http://localhost:5173", "https://frontend-lac-six-99.vercel.app"],
+
   optionsSuccessStatus: 200,
 };
 
