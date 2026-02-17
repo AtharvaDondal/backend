@@ -1,7 +1,7 @@
 import Enrollment from "../models/Enrollment.js";
 
 export const generatePairings = async (tournamentId, round) => {
-  const enrollments = await Enrollment.find({ tournament: tournamentId })
+  const enrollments = await Enrollment.find({ tournament: tournamentId, status: "active" })
     .populate("player")
     .lean();
 

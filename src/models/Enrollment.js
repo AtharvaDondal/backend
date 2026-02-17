@@ -20,6 +20,14 @@ const enrollmentSchema = new mongoose.Schema(
     totalTime: { type: Number, default: 0 }, // total time spent in matches (minutes)
     byes: { type: Number, default: 0 },
     opponents: [{ type: mongoose.Schema.Types.ObjectId, ref: "Player" }], // Track who they've played
+
+    status: {
+      type: String,
+      enum: ["active", "eliminated", "withdrawn"],
+      default: "active",
+    },
+    eliminationRound: { type: Number, default: null },
+    eliminationReason: { type: String, default: null }, // 'losses', 'withdrawal', 'disqualified'
   },
   { timestamps: true },
 );

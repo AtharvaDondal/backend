@@ -97,21 +97,105 @@ export const getTournamentStandings = async (req, res) => {
 export const resetTournament = async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Delete all matches for this tournament
     await Match.deleteMany({ tournament: id });
-    
+
     // Delete all enrollments for this tournament
     await Enrollment.deleteMany({ tournament: id });
-    
+
     // Reset tournament state
     await Tournament.findByIdAndUpdate(id, {
       currentRound: 0,
-      status: 'upcoming',
-      $set: { players: [] }
+      status: "upcoming",
+      $set: { players: [] },
     });
-    
-    res.json({ message: 'Tournament reset successfully' });
+
+    res.json({ message: "Tournament reset successfully" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const enrollMultiplePlayers = async (req, res) => {
+  try {
+    const { tournamentId, playerIds } = req.body; // Array of player IDs
+
+    const results = [];
+    const errors = [];
+
+    for (const playerId of playerIds) {
+      try {
+        const existing = await Enrollment.findOne({
+          tournament: tournamentId,
+          player: playerId,
+        });
+
+        if (existing) {
+          errors.push({ playerId, message: "Already enrolled" });
+          continue;
+        }
+
+        const enrollment = new Enrollment({
+          tournament: tournamentId,
+          player: playerId,
+        });
+
+        await enrollment.save();
+
+        await Tournament.findByIdAndUpdate(tournamentId, {
+          $addToSet: { players: playerId },
+        });
+
+        results.push({ playerId, status: "enrolled" });
+      } catch (error) {
+        errors.push({ playerId, message: error.message });
+      }
+    }
+
+    res.status(201).json({
+      success: results.length,
+      failed: errors.length,
+      results,
+      errors,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+export const checkEliminations = async (tournamentId, round) => {
+  const enrollments = await Enrollment.find({
+    tournament: tournamentId,
+    status: "active",
+  });
+
+  for (const enrollment of enrollments) {
+    // Eliminate if: 3+ losses OR 0 points after round 3
+    if (
+      enrollment.losses >= 3 ||
+      (round >= 3 && enrollment.totalPoints === 0)
+    ) {
+      await Enrollment.findByIdAndUpdate(enrollment._id, {
+        status: "eliminated",
+        eliminationRound: round,
+        eliminationReason: enrollment.losses >= 3 ? "3_losses" : "no_points",
+      });
+    }
+  }
+};
+
+export const eliminatePlayer = async (req, res) => {
+  try {
+    const { enrollmentId } = req.params;
+    const { reason } = req.body;
+
+    await Enrollment.findByIdAndUpdate(enrollmentId, {
+      status: "eliminated",
+      eliminationReason: reason || "manual",
+    });
+
+    res.json({ message: "Player eliminated" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
