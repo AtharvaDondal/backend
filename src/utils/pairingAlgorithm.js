@@ -1,11 +1,52 @@
 import Enrollment from "../models/Enrollment.js";
+import Tournament from "../models/Tournament.js";
+// In pairingAlgorithm.js - REPLACE generatePairings function
 
 export const generatePairings = async (tournamentId, round) => {
-  const enrollments = await Enrollment.find({ tournament: tournamentId, status: "active" })
+  const tournament = await Tournament.findById(tournamentId);
+  const isKnockout = tournament.format === "knockout";
+
+  // CRITICAL FIX: Fresh query with strict active filter
+  // Use lean() for performance but ensure we get fresh data
+  const enrollments = await Enrollment.find({
+    tournament: tournamentId,
+    status: "active", // Strict filter
+  })
     .populate("player")
     .lean();
 
-  // Sort for pairing: Weakest first (must play)
+  console.log(
+    `[PAIRING] Round ${round}: Found ${enrollments.length} active players`,
+  );
+  console.log(
+    `[PAIRING] Active:`,
+    enrollments.map((e) => e.player?.name).join(", "),
+  );
+
+  // Get eliminated players for debugging
+  const eliminated = await Enrollment.find({
+    tournament: tournamentId,
+    status: "eliminated",
+  })
+    .populate("player")
+    .lean();
+
+  console.log(
+    `[PAIRING] Eliminated:`,
+    eliminated.map((e) => e.player?.name).join(", "),
+  );
+
+  if (enrollments.length === 0) {
+    console.log(`[PAIRING] No active players!`);
+    return { pairings: [], byePlayer: null };
+  }
+
+  if (enrollments.length === 1) {
+    console.log(`[PAIRING] Only 1 player left - tournament should end`);
+    return { pairings: [], byePlayer: null };
+  }
+
+  // Sort for pairing
   const sortedEnrollments = enrollments.sort((a, b) => {
     if (a.totalPoints !== b.totalPoints) return a.totalPoints - b.totalPoints;
     if (b.totalTime !== a.totalTime) return b.totalTime - a.totalTime;
@@ -20,40 +61,44 @@ export const generatePairings = async (tournamentId, round) => {
     time: e.totalTime,
     byes: e.byes,
     opponents: e.opponents.map((o) => o.toString()),
-    lastByeRound: e.lastByeRound || 0, // Track when they last got bye
+    lastByeRound: e.lastByeRound || 0,
+    losses: e.losses || 0,
   }));
 
   let byePlayer = null;
   let activePlayers = [...players];
 
+  // Handle bye player
   if (players.length % 2 !== 0) {
-    // FIX: Select player with FEWEST byes first, then most recent bye
-    // Sort: Fewest byes -> Longest ago bye -> Lowest points
-    const byeCandidates = [...players].sort((a, b) => {
-      // 1. Fewest byes first
-      if (a.byes !== b.byes) return a.byes - b.byes;
-      // 2. Longest ago bye (or never)
-      if (a.lastByeRound !== b.lastByeRound)
+    let byeCandidates;
+
+    if (isKnockout) {
+      byeCandidates = [...players].sort((a, b) => {
+        if (a.losses !== b.losses) return a.losses - b.losses;
+        if (b.points !== a.points) return b.points - a.points;
+        if (a.byes !== b.byes) return a.byes - b.byes;
         return a.lastByeRound - b.lastByeRound;
-      // 3. Lowest points (weakest gets rest? No, strongest gets rest)
-      return b.points - a.points; // Higher points = more deserving of rest
-    });
+      });
+    } else {
+      byeCandidates = [...players].sort((a, b) => {
+        if (a.byes !== b.byes) return a.byes - b.byes;
+        if (a.lastByeRound !== b.lastByeRound)
+          return a.lastByeRound - b.lastByeRound;
+        return b.points - a.points;
+      });
+    }
 
-    // Pick the one with fewest byes who hasn't had bye recently
     byePlayer = byeCandidates[0];
-
-    // If everyone has same byes, pick the one who had bye longest ago
-    // But ensure we don't pick same person twice in a row
-
     activePlayers = players.filter(
       (p) => p.playerId.toString() !== byePlayer.playerId.toString(),
     );
 
-    // Update bye player record
     await Enrollment.findByIdAndUpdate(byePlayer.enrollmentId, {
       $inc: { byes: 1, totalPoints: 1 },
       $set: { lastByeRound: round },
     });
+
+    console.log(`[PAIRING] Bye: ${byePlayer.name}`);
   }
 
   // Generate pairings
@@ -69,18 +114,21 @@ export const generatePairings = async (tournamentId, round) => {
 
     for (let j = i + 1; j < activePlayers.length; j++) {
       const player2 = activePlayers[j];
-
       if (used.has(player2.playerId.toString())) continue;
 
       const alreadyPlayed = player1.opponents.includes(
         player2.playerId.toString(),
       );
-
       let score = 0;
       if (!alreadyPlayed) score += 1000;
 
-      const pointDiff = Math.abs(player1.points - player2.points);
-      score -= pointDiff * 10;
+      if (isKnockout) {
+        const pointDiff = Math.abs(player1.points - player2.points);
+        score -= pointDiff * 5;
+      } else {
+        const pointDiff = Math.abs(player1.points - player2.points);
+        score -= pointDiff * 10;
+      }
 
       if (score > bestScore) {
         bestScore = score;
@@ -106,8 +154,10 @@ export const generatePairings = async (tournamentId, round) => {
       });
       used.add(player1.playerId.toString());
       used.add(bestOpponent.playerId.toString());
+      console.log(`[PAIRING] ${player1.name} vs ${bestOpponent.name}`);
     }
   }
 
+  console.log(`[PAIRING] Total matches: ${pairings.length}`);
   return { pairings, byePlayer };
 };

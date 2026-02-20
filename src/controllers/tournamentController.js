@@ -163,28 +163,47 @@ export const enrollMultiplePlayers = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+// In tournamentController.js - REPLACE checkEliminations function
 
 export const checkEliminations = async (tournamentId, round) => {
-  const enrollments = await Enrollment.find({
+  console.log(
+    `[CHECK ELIM] Running for tournament ${tournamentId}, round ${round}`,
+  );
+
+  const tournament = await Tournament.findById(tournamentId);
+  const maxLosses =
+    tournament.maxLosses || (tournament.format === "knockout" ? 1 : 3);
+
+  console.log(
+    `[CHECK ELIM] Format: ${tournament.format}, maxLosses: ${maxLosses}`,
+  );
+
+  // Find all active players who should be eliminated
+  const playersToEliminate = await Enrollment.find({
     tournament: tournamentId,
     status: "active",
+    losses: { $gte: maxLosses },
   });
 
-  for (const enrollment of enrollments) {
-    // Eliminate if: 3+ losses OR 0 points after round 3
-    if (
-      enrollment.losses >= 3 ||
-      (round >= 3 && enrollment.totalPoints === 0)
-    ) {
-      await Enrollment.findByIdAndUpdate(enrollment._id, {
-        status: "eliminated",
-        eliminationRound: round,
-        eliminationReason: enrollment.losses >= 3 ? "3_losses" : "no_points",
-      });
-    }
-  }
-};
+  console.log(
+    `[CHECK ELIM] Found ${playersToEliminate.length} players to eliminate`,
+  );
 
+  for (const enrollment of playersToEliminate) {
+    console.log(
+      `[CHECK ELIM] Eliminating: ${enrollment.player}, losses: ${enrollment.losses}`,
+    );
+
+    await Enrollment.findByIdAndUpdate(enrollment._id, {
+      status: "eliminated",
+      eliminationRound: round,
+      eliminationReason:
+        tournament.format === "knockout" ? "knockout_loss" : "max_losses",
+    });
+  }
+
+  return playersToEliminate.length;
+};
 export const eliminatePlayer = async (req, res) => {
   try {
     const { enrollmentId } = req.params;

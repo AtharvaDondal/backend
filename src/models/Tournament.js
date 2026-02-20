@@ -16,8 +16,14 @@ const tournamentSchema = new mongoose.Schema(
     players: [{ type: mongoose.Schema.Types.ObjectId, ref: "Player" }],
     format: {
       type: String,
-      enum: ["swiss", "round-robin", "knockout"],
+      enum: ["knockout", "swiss"],
       default: "swiss",
+    },
+
+    // Elimination threshold (1 for knockout, 3 for swiss)
+    maxLosses: {
+      type: Number,
+      default: 1, // Default 3 for backward compatibility
     },
   },
   { timestamps: true },
